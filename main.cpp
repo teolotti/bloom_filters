@@ -100,44 +100,6 @@ int main() {
     auto end_gpu = std::chrono::high_resolution_clock::now();
     double gpu_baseline_insert_time = std::chrono::duration<double>(end_gpu - start_gpu).count();
 
-    // ---- Versione Constant Memory ----
-    set_seeds_const(h_seeds, k);
-
-    CUDA_CHECK(cudaMemset(d_bit_array, 0, ((m + 31) / 32) * sizeof(uint32_t)));
-    start_gpu = std::chrono::high_resolution_clock::now();
-    bloom_insert_constant<<<grid_size, block_size>>>(d_bit_array, d_elements, max_len, num_elements, m, k);
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
-    end_gpu = std::chrono::high_resolution_clock::now();
-    double gpu_constant_insert_time = std::chrono::duration<double>(end_gpu - start_gpu).count();
-
-    // ---- Versione Shared Memory ----
-    size_t shared_mem_size = ((segment_bits + 31) / 32) * sizeof(uint32_t);
-    CUDA_CHECK(cudaMemset(d_bit_array, 0, ((m + 31) / 32) * sizeof(uint32_t)));
-    start_gpu = std::chrono::high_resolution_clock::now();
-    bloom_insert_shared<<<grid_size, block_size, shared_mem_size>>>(d_bit_array, d_elements, d_seeds, max_len, num_elements, m, k, segment_bits);
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());
-    end_gpu = std::chrono::high_resolution_clock::now();
-    double gpu_shared_insert_time = std::chrono::duration<double>(end_gpu - start_gpu).count();
-
-    // ========== Risultati ==========
-    std::cout << "=== Benchmark Bloom Filter ===\n";
-    std::cout << "Configurazione: m=" << m << " bit, k=" << k << ", elementi=" << num_elements << "\n\n";
-
-    std::cout << "CPU (Sequenziale):\n";
-    std::cout << "  Inserimento: " << cpu_insert_time << " s\n";
-    std::cout << "  Query: " << cpu_query_time << " s\n\n";
-
-    std::cout << "GPU (Baseline):\n";
-    std::cout << "  Inserimento: " << gpu_baseline_insert_time << " s (Speedup: " << cpu_insert_time / gpu_baseline_insert_time << "x)\n\n";
-
-    std::cout << "GPU (Constant Memory):\n";
-    std::cout << "  Inserimento: " << gpu_constant_insert_time << " s (Speedup: " << cpu_insert_time / gpu_constant_insert_time << "x)\n\n";
-
-    std::cout << "GPU (Shared Memory):\n";
-    std::cout << "  Inserimento: " << gpu_shared_insert_time << " s (Speedup: " << cpu_insert_time / gpu_shared_insert_time << "x)\n";
-
     // ========== Query CPU e GPU + confronto risultati ==========
     std::vector<bool> results(num_elements, false);
     // Query CPU
@@ -164,7 +126,83 @@ int main() {
     for (int i = 0; i < num_elements; ++i) {
         if (results[i] != gpu_results[i]) {
             all_correct = false;
-            std::cout << "Mismatch at index " << i << ": CPU=" << results[i] << ", GPU=" << gpu_results[i] << "\n";
+            //std::cout << "Mismatch at index " << i << ": CPU=" << results[i] << ", GPU=" << gpu_results[i] << "\n";
+        }
+    }
+    if (all_correct) {
+        std::cout << "Tutti i risultati sono corretti!\n";
+    } else {
+        std::cout << "Ci sono discrepanze nei risultati!\n";
+    }
+    delete [] gpu_results;
+
+    // ---- Versione Constant Memory ----
+    set_seeds_const(h_seeds, k);
+
+    CUDA_CHECK(cudaMemset(d_bit_array, 0, ((m + 31) / 32) * sizeof(uint32_t)));
+    start_gpu = std::chrono::high_resolution_clock::now();
+    bloom_insert_constant<<<grid_size, block_size>>>(d_bit_array, d_elements, max_len, num_elements, m, k);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    end_gpu = std::chrono::high_resolution_clock::now();
+    double gpu_constant_insert_time = std::chrono::duration<double>(end_gpu - start_gpu).count();
+
+    // Query GPU con Constant Memory
+    CUDA_CHECK(cudaMemset(d_results, 0, num_elements * sizeof(bool)));
+    start_gpu = std::chrono::high_resolution_clock::now();
+    bloom_query_constant<<<grid_size, block_size>>>(d_bit_array, d_queries, max_len, num_elements, m, k, d_results);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    end_gpu = std::chrono::high_resolution_clock::now();
+    double gpu_constant_query_time = std::chrono::duration<double>(end_gpu - start_gpu).count();
+    std::cout << "GPU Query (Constant Memory): " << gpu_constant_query_time << " s\n";
+    // Copia risultati da GPU
+    gpu_results = new bool[num_elements];
+    CUDA_CHECK(cudaMemcpy(gpu_results, d_results, num_elements * sizeof(bool), cudaMemcpyDeviceToHost));
+    // Confronta risultati
+    all_correct = true;
+    for (int i = 0; i < num_elements; ++i) {
+        if (results[i] != gpu_results[i]) {
+            all_correct = false;
+            //std::cout << "Mismatch at index " << i << ": CPU=" << results[i] << ", GPU=" << gpu_results[i] << "\n";
+        }
+    }
+    if (all_correct) {
+        std::cout << "Tutti i risultati sono corretti!\n";
+    } else {
+        std::cout << "Ci sono discrepanze nei risultati!\n";
+    }
+    delete [] gpu_results;
+
+
+    // ---- Versione Shared Memory ----
+    size_t shared_mem_size = block_size * max_len * sizeof(char);
+    CUDA_CHECK(cudaMemset(d_bit_array, 0, ((m + 31) / 32) * sizeof(uint32_t)));
+    start_gpu = std::chrono::high_resolution_clock::now();
+    bloom_insert_with_shared_elements_buffer<<<grid_size, block_size, shared_mem_size>>>(d_bit_array, d_elements, d_seeds, max_len, num_elements, m, k);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    end_gpu = std::chrono::high_resolution_clock::now();
+    double gpu_shared_insert_time = std::chrono::duration<double>(end_gpu - start_gpu).count();
+
+    // Query GPU con Shared Memory
+    CUDA_CHECK(cudaMemset(d_results, 0, num_elements * sizeof(bool)));
+    start_gpu = std::chrono::high_resolution_clock::now();
+    bloom_query_with_shared_elements_buffer<<<grid_size, block_size, shared_mem_size>>>(d_bit_array, d_queries, d_seeds, max_len, num_elements, m, k, d_results);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    end_gpu = std::chrono::high_resolution_clock::now();
+    double gpu_shared_query_time = std::chrono::duration<double>(end_gpu - start_gpu).count();
+    std::cout << "GPU Query (Shared Memory): " << gpu_shared_query_time << " s\n";
+    // Copia risultati da GPU
+    gpu_results = new bool[num_elements];
+    CUDA_CHECK(cudaMemcpy(gpu_results, d_results, num_elements * sizeof(bool), cudaMemcpyDeviceToHost));
+    // Confronta risultati
+    all_correct = true;
+    for (int i = 0; i < num_elements; ++i) {
+        if (results[i] != gpu_results[i]) {
+            all_correct = false;
+            //std::cout << "Mismatch at index " << i << ": CPU=" << results[i] << ", GPU=" << gpu_results[i] << "\n";
         }
     }
     if (all_correct) {
@@ -173,6 +211,26 @@ int main() {
         std::cout << "Ci sono discrepanze nei risultati!\n";
     }
     delete[] gpu_results;
+
+
+    // ========== Risultati ==========
+    std::cout << "=== Benchmark Bloom Filter ===\n";
+    std::cout << "Configurazione: m=" << m << " bit, k=" << k << ", elementi=" << num_elements << "\n\n";
+
+    std::cout << "CPU (Sequenziale):\n";
+    std::cout << "  Inserimento: " << cpu_insert_time << " s\n";
+    std::cout << "  Query: " << cpu_query_time << " s\n\n";
+
+    std::cout << "GPU (Baseline):\n";
+    std::cout << "  Inserimento: " << gpu_baseline_insert_time << " s (Speedup: " << cpu_insert_time / gpu_baseline_insert_time << "x)\n\n";
+
+    std::cout << "GPU (Constant Memory):\n";
+    std::cout << "  Inserimento: " << gpu_constant_insert_time << " s (Speedup: " << cpu_insert_time / gpu_constant_insert_time << "x)\n\n";
+
+    std::cout << "GPU (Shared Memory):\n";
+    std::cout << "  Inserimento: " << gpu_shared_insert_time << " s (Speedup: " << cpu_insert_time / gpu_shared_insert_time << "x)\n";
+
+
 
 
     // ========== Pulizia ==========
