@@ -9,7 +9,7 @@ __global__ void bloom_insert_kernel(uint32_t* bit_array, const char* elements, c
 
     for (int i = 0; i < k; ++i) {
         size_t h = 0; // Use a different seed for each hash function
-        for (int j = 0; j < elem_size; ++j)
+        for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
             h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function, elem_size is the size of each element
         h = (h + seeds[i]) % m;
         atomicOr(&bit_array[h / 32], 1 << (h % 32));
@@ -23,7 +23,7 @@ __global__ void bloom_query_kernel(uint32_t* bit_array, const char* elements, co
     bool possibly_present = true;
     for (int i = 0; i < k && possibly_present; ++i) {
         size_t h = 0;
-        for (int j = 0; j < elem_size; ++j)
+        for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
             h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
         h = (h + seeds[i]) % m;
         if (!(bit_array[h / 32] & (1 << (h % 32)))) possibly_present = false;
@@ -31,32 +31,35 @@ __global__ void bloom_query_kernel(uint32_t* bit_array, const char* elements, co
     results[idx] = possibly_present;
 }
 
-__global__ void bloom_insert_shared(uint32_t* bit_array, const char* elements, const int* seeds, int elem_size, int num_elems, int m, int k) {
+__global__ void bloom_insert_shared(uint32_t* bit_array, const char* elements, const int* seeds, int elem_size, int num_elems, int m, int k, int segment_bits) {
     extern __shared__ uint32_t shared_bits[];
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + tid;
+    int segment_words = (segment_bits + 31) / 32; // Number of 32-bit integers needed to represent segment_bits
+    int segment_offset = blockIdx.x * segment_bits;
 
     // Inizializza shared memory
     // Each thread block will use shared memory to accumulate bits
     // Only allocate enough space for the number of 32-bit integers needed ((m + 31) / 32)
-    for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
+    for (int i = tid; i < segment_words; i += blockDim.x) {
         shared_bits[i] = 0; // Initialize shared memory bits to 0
     }
+    __syncthreads(); // Ensure all threads have initialized shared memory
 
     if (idx < num_elems) {
         for (int i = 0; i < k; ++i) {
             size_t h = 0;
-            for (int j = 0; j < elem_size; ++j)
-                h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
-            h = (h + seeds[i]) % m;
+            for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j) // Ensure we don't read beyond the element size
+                h = (h * 31 + elements[idx * elem_size + j]) % segment_bits; // Simple hash function
+            h = (h + seeds[i]) % segment_bits; // Use a different seed for each hash function
             atomicOr(&shared_bits[h / 32], 1 << (h % 32));
         }
     }
     __syncthreads();
 
     // Merge in globale
-    for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
-        atomicOr(&bit_array[i], shared_bits[i]); // Merge shared bits into global memory
+    for (int i = tid; i < segment_words; i += blockDim.x) {
+        atomicOr(&bit_array[(segment_offset / 32) + i], shared_bits[i]); // Merge shared bits into global memory
     }
 }
 
@@ -74,7 +77,7 @@ __global__ void bloom_query_shared(uint32_t* bit_array, const char* elements, co
         bool possibly_present = true;
         for (int i = 0; i < k && possibly_present; ++i) {
             size_t h = 0;
-            for (int j = 0; j < elem_size; ++j)
+            for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + seeds[i]) % m;
             if (!(shared_bits[h / 32] & (1 << (h % 32)))) possibly_present = false;
@@ -84,7 +87,7 @@ __global__ void bloom_query_shared(uint32_t* bit_array, const char* elements, co
 } // probably not useful and not necessary, but kept for experimentation
 
 // seeds for hash functions can be defined as constants (prime numbers or random values)
-__constant__ int const_seeds[5];
+__constant__ int const_seeds[NUM_SEEDS];
 
 __global__ void bloom_insert_constant(uint32_t* bit_array, const char* elements, int elem_size, int num_elems, int m, int k) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -92,7 +95,7 @@ __global__ void bloom_insert_constant(uint32_t* bit_array, const char* elements,
 
     for (int i = 0; i < k; ++i) {
         size_t h = 0;
-        for (int j = 0; j < elem_size; ++j)
+        for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
             h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
         h = (h + const_seeds[i]) % m; // Use a constant seed for each hash function
         atomicOr(&bit_array[h / 32], 1 << (h % 32));
@@ -106,7 +109,7 @@ __global__ void bloom_query_constant(uint32_t* bit_array, const char* elements, 
     bool possibly_present = true;
     for (int i = 0; i < k && possibly_present; ++i) {
         size_t h = 0;
-        for (int j = 0; j < elem_size; ++j)
+        for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
             h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
         h = (h + const_seeds[i]) % m; // Use a constant seed for each hash function
         if (!(bit_array[h / 32] & (1 << (h % 32)))) possibly_present = false;
@@ -127,7 +130,7 @@ __global__ void bloom_insert_hybrid(uint32_t* bit_array, const char* elements, i
     if (idx < num_elems) {
         for (int i = 0; i < k; ++i) {
             size_t h = 0;
-            for (int j = 0; j < elem_size; ++j)
+            for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + const_seeds[i]) % m;
             atomicOr(&shared_bits[h / 32], 1 << (h % 32));
@@ -155,7 +158,7 @@ __global__ void bloom_query_hybrid(uint32_t* bit_array, const char* elements, in
         bool possibly_present = true;
         for (int i = 0; i < k && possibly_present; ++i) {
             size_t h = 0;
-            for (int j = 0; j < elem_size; ++j)
+            for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + const_seeds[i]) % m;
             if (!(shared_bits[h / 32] & (1 << (h % 32)))) possibly_present = false;
