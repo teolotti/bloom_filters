@@ -31,20 +31,17 @@ __global__ void bloom_query_kernel(uint32_t* bit_array, const char* elements, co
     results[idx] = possibly_present;
 }
 
-__global__ void bloom_insert_shared(uint32_t* bit_array, const char* elements, const int* seeds, int elem_size, int num_elems, int m, int k, int segment_bits) {
+__global__ void bloom_insert_shared(uint32_t* bit_array, const char* elements, const int* seeds, int elem_size, int num_elems, int m, int k) {
     extern __shared__ uint32_t shared_bits[];
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + tid;
-    int segment_words = (segment_bits + 31) / 32; // Number of 32-bit integers needed to represent segment_bits
-    int segment_offset = blockIdx.x * segment_bits;
 
     // Inizializza shared memory
     // Each thread block will use shared memory to accumulate bits
     // Only allocate enough space for the number of 32-bit integers needed ((m + 31) / 32)
-    for (int i = tid; i < segment_words; i += blockDim.x) {
+    for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
         shared_bits[i] = 0; // Initialize shared memory bits to 0
     }
-    __syncthreads(); // Ensure all threads have initialized shared memory
 
     if (idx < num_elems) {
         for (int i = 0; i < k; ++i) {
@@ -53,30 +50,26 @@ __global__ void bloom_insert_shared(uint32_t* bit_array, const char* elements, c
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + seeds[i]) % m; // Use a different seed for each hash function
             // Set the bit in shared memory
-            int segment_id = h / segment_bits; // Determine which segment this hash falls into
-            if (segment_id!= blockIdx.x) continue; // Only process hashes that belong to this segment
-            int local_h = h % segment_bits; // Local hash within the segment
-            atomicOr(&shared_bits[local_h / 32], 1u << (local_h % 32));
+            atomicOr(&shared_bits[h / 32], 1 << (h % 32)); // Use atomic operation
         }
     }
     __syncthreads();
 
     // Merge in globale
-    for (int i = tid; i < segment_words; i += blockDim.x) {
-        atomicOr(&bit_array[(segment_offset / 32) + i], shared_bits[i]); // Merge shared bits into global memory
+    for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
+        atomicOr(&bit_array[i], shared_bits[i]); // Merge shared bits into global memory
     }
 }
 
-__global__ void bloom_query_shared(uint32_t* bit_array, const char* elements, const int* seeds, int elem_size, int num_elems, int m, int k, bool* results, int segment_bits) {
+__global__ void bloom_query_shared(uint32_t* bit_array, const char* elements, const int* seeds, int elem_size, int num_elems, int m, int k, bool* results) {
     extern __shared__ uint32_t shared_bits[];
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + tid;
-    int segment_words = (segment_bits + 31) / 32; // Number of 32-bit integers needed to represent segment_bits
-    int segment_offset = blockIdx.x * segment_bits;
+
 
     // Inizializza shared memory
-    for (int i = tid; i < segment_words; i += blockDim.x) {
-        shared_bits[i] = bit_array[(segment_offset / 32) + i]; // Copy global bits to shared memory
+    for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
+        shared_bits[i] = bit_array[i]; // Copy global bits to shared memory
     }
 
     if (idx < num_elems) {
@@ -86,14 +79,9 @@ __global__ void bloom_query_shared(uint32_t* bit_array, const char* elements, co
             for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + seeds[i]) % m;
-            int segment_id = h / segment_bits; // Determine which segment this hash falls into
-            if (segment_id != blockIdx.x) {
-                possibly_present = false; // If the hash does not belong to this segment, it cannot be present
-                break; // No need to check further if we already know it's not present
+            if (!(shared_bits[h / 32] & (1 << (h % 32)))) {
+                possibly_present = false; // If any bit is not set, the element is definitely not present
             }
-            int local_h = h % segment_bits; // Local hash within the segment
-
-            if (!(shared_bits[local_h / 32] & (1 << (local_h % 32)))) possibly_present = false;
         }
         results[idx] = possibly_present;
     }

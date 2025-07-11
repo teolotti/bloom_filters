@@ -27,7 +27,7 @@ private:
         return (h + seed) % m; // Use seed to create different hash functions
     }
 public:
-    BloomFilters(int size, int numHashFunctions, const int* seedArray) : m(size), k(numHashFunctions), seeds(seedArray, seedArray + numHashFunctions) {
+    BloomFilters(int size, int numHashFunctions, std::vector<int> seedArray) : m(size), k(numHashFunctions), seeds(std::move(seedArray)) {
         bitArray.resize((m + 31) / 32, 0); // Initialize bit array
     }
 
