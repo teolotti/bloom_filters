@@ -1,4 +1,8 @@
 #include <driver_types.h>
+#include <cstdint>
+#include <iostream>
+#include <cstdlib>
+#include <cuda_runtime.h>
 
 const int NUM_SEEDS = 5; // Numero massimo di semi per le funzioni hash
 

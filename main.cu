@@ -12,7 +12,7 @@ __global__ void bloom_insert_kernel(uint32_t* bit_array, const char* elements, c
         for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
             h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function, elem_size is the size of each element
         h = (h + seeds[i]) % m;
-        atomicOr(&bit_array[h / 32], 1 << (h % 32));
+        atomicOr(&bit_array[h / 32], 1u << (h % 32));
     }
 }
 
@@ -26,7 +26,7 @@ __global__ void bloom_query_kernel(uint32_t* bit_array, const char* elements, co
         for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
             h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
         h = (h + seeds[i]) % m;
-        if (!(bit_array[h / 32] & (1 << (h % 32)))) possibly_present = false;
+        if (!(bit_array[h / 32] & (1u << (h % 32)))) possibly_present = false;
     }
     results[idx] = possibly_present;
 }
@@ -50,7 +50,7 @@ __global__ void bloom_insert_shared(uint32_t* bit_array, const char* elements, c
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + seeds[i]) % m; // Use a different seed for each hash function
             // Set the bit in shared memory
-            atomicOr(&shared_bits[h / 32], 1 << (h % 32)); // Use atomic operation
+            atomicOr(&shared_bits[h / 32], 1u << (h % 32)); // Use atomic operation
         }
     }
     __syncthreads();
@@ -79,7 +79,7 @@ __global__ void bloom_query_shared(uint32_t* bit_array, const char* elements, co
             for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + seeds[i]) % m;
-            if (!(shared_bits[h / 32] & (1 << (h % 32)))) {
+            if (!(shared_bits[h / 32] & (1u << (h % 32)))) {
                 possibly_present = false; // If any bit is not set, the element is definitely not present
             }
         }
@@ -99,7 +99,7 @@ __global__ void bloom_insert_constant(uint32_t* bit_array, const char* elements,
         for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
             h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
         h = (h + const_seeds[i]) % m; // Use a constant seed for each hash function
-        atomicOr(&bit_array[h / 32], 1 << (h % 32));
+        atomicOr(&bit_array[h / 32], 1u << (h % 32));
     }
 }
 
@@ -113,7 +113,7 @@ __global__ void bloom_query_constant(uint32_t* bit_array, const char* elements, 
         for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
             h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
         h = (h + const_seeds[i]) % m; // Use a constant seed for each hash function
-        if (!(bit_array[h / 32] & (1 << (h % 32)))) possibly_present = false;
+        if (!(bit_array[h / 32] & (1u << (h % 32)))) possibly_present = false;
     }
     results[idx] = possibly_present;
 }
@@ -134,7 +134,7 @@ __global__ void bloom_insert_hybrid(uint32_t* bit_array, const char* elements, i
             for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + const_seeds[i]) % m;
-            atomicOr(&shared_bits[h / 32], 1 << (h % 32));
+            atomicOr(&shared_bits[h / 32], 1u << (h % 32));
         }
     }
     __syncthreads();
@@ -162,7 +162,7 @@ __global__ void bloom_query_hybrid(uint32_t* bit_array, const char* elements, in
             for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
                 h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
             h = (h + const_seeds[i]) % m;
-            if (!(shared_bits[h / 32] & (1 << (h % 32)))) possibly_present = false;
+            if (!(shared_bits[h / 32] & (1u << (h % 32)))) possibly_present = false;
         }
         results[idx] = possibly_present;
     }

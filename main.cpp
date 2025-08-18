@@ -42,11 +42,12 @@ int main() {
     for (int i = 10; i <= 20; i += 2) num_elements_values.push_back(1 << i);
 
     // File CSV per ogni versione
-    std::ofstream csv_base("benchmark_base.csv");
-    std::ofstream csv_const("benchmark_constant.csv");
-    std::ofstream csv_shared("benchmark_shared.csv");
-    std::ofstream csv_shared_buf("benchmark_shared_buffer.csv");
-    std::ofstream csv_hybrid("benchmark_hybrid.csv");
+
+    std::ofstream csv_base("../results/base.csv");
+    std::ofstream csv_const("../results/constant.csv");
+    std::ofstream csv_shared("../results/shared.csv");
+    std::ofstream csv_shared_buf("../results/shared_buffer.csv");
+    std::ofstream csv_hybrid("../results/hybrid.csv");
 
     // Header CSV
     std::string header = "block_size,m,num_elements,cpu_insert,cpu_query,gpu_insert,gpu_query\n";
@@ -171,9 +172,10 @@ int main() {
                 // --- SHARED & HYBRID solo se m <= 48KB ---
                 if (m <= (48 * 1024 * 8)) {
                     // SHARED
+                    size_t shared_bits_bytes = ((m + 31) / 32) * sizeof(uint32_t);
                     CUDA_CHECK(cudaMemset(d_bit_array, 0, ((m + 31) / 32) * sizeof(uint32_t)));
                     start_gpu = std::chrono::high_resolution_clock::now();
-                    bloom_insert_shared<<<grid_size, block_size>>>(d_bit_array, d_elements, d_seeds, max_len, num_elements, m, k);
+                    bloom_insert_shared<<<grid_size, block_size, shared_bits_bytes>>>(d_bit_array, d_elements, d_seeds, max_len, num_elements, m, k);
                     CUDA_CHECK(cudaGetLastError());
                     CUDA_CHECK(cudaDeviceSynchronize());
                     end_gpu = std::chrono::high_resolution_clock::now();
@@ -181,7 +183,7 @@ int main() {
 
                     CUDA_CHECK(cudaMemset(d_results, 0, num_elements * sizeof(bool)));
                     start_gpu = std::chrono::high_resolution_clock::now();
-                    bloom_query_shared<<<grid_size, block_size>>>(d_bit_array, d_queries, d_seeds, max_len, num_elements, m, k, d_results);
+                    bloom_query_shared<<<grid_size, block_size, shared_bits_bytes>>>(d_bit_array, d_queries, d_seeds, max_len, num_elements, m, k, d_results);
                     CUDA_CHECK(cudaGetLastError());
                     CUDA_CHECK(cudaDeviceSynchronize());
                     end_gpu = std::chrono::high_resolution_clock::now();
@@ -192,7 +194,7 @@ int main() {
                     // HYBRID
                     CUDA_CHECK(cudaMemset(d_bit_array, 0, ((m + 31) / 32) * sizeof(uint32_t)));
                     start_gpu = std::chrono::high_resolution_clock::now();
-                    bloom_insert_hybrid<<<grid_size, block_size>>>(d_bit_array, d_elements, max_len, num_elements, m, k);
+                    bloom_insert_hybrid<<<grid_size, block_size, shared_bits_bytes>>>(d_bit_array, d_elements, max_len, num_elements, m, k);
                     CUDA_CHECK(cudaGetLastError());
                     CUDA_CHECK(cudaDeviceSynchronize());
                     end_gpu = std::chrono::high_resolution_clock::now();
@@ -200,7 +202,7 @@ int main() {
 
                     CUDA_CHECK(cudaMemset(d_results, 0, num_elements * sizeof(bool)));
                     start_gpu = std::chrono::high_resolution_clock::now();
-                    bloom_query_hybrid<<<grid_size, block_size>>>(d_bit_array, d_queries, max_len, num_elements, m, k, d_results);
+                    bloom_query_hybrid<<<grid_size, block_size, shared_bits_bytes>>>(d_bit_array, d_queries, max_len, num_elements, m, k, d_results);
                     CUDA_CHECK(cudaGetLastError());
                     CUDA_CHECK(cudaDeviceSynchronize());
                     end_gpu = std::chrono::high_resolution_clock::now();
