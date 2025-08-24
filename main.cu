@@ -8,9 +8,9 @@ __global__ void bloom_insert_kernel(uint32_t* bit_array, const char* elements, c
     if (idx >= num_elems) return;
 
     for (int i = 0; i < k; ++i) {
-        size_t h = 0; // Use a different seed for each hash function
+        size_t h = 0; 
         for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
-            h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function, elem_size is the size of each element
+            h = (h * 31 + elements[idx * elem_size + j]) % m; 
         h = (h + seeds[i]) % m;
         atomicOr(&bit_array[h / 32], 1u << (h % 32));
     }
@@ -24,7 +24,7 @@ __global__ void bloom_query_kernel(uint32_t* bit_array, const char* elements, co
     for (int i = 0; i < k && possibly_present; ++i) {
         size_t h = 0;
         for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
-            h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
+            h = (h * 31 + elements[idx * elem_size + j]) % m; 
         h = (h + seeds[i]) % m;
         if (!(bit_array[h / 32] & (1u << (h % 32)))) possibly_present = false;
     }
@@ -36,28 +36,25 @@ __global__ void bloom_insert_shared(uint32_t* bit_array, const char* elements, c
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + tid;
 
-    // Inizializza shared memory
-    // Each thread block will use shared memory to accumulate bits
-    // Only allocate enough space for the number of 32-bit integers needed ((m + 31) / 32)
+    
     for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
-        shared_bits[i] = 0; // Initialize shared memory bits to 0
+        shared_bits[i] = 0; 
     }
 
     if (idx < num_elems) {
         for (int i = 0; i < k; ++i) {
             size_t h = 0;
-            for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j) // Ensure we don't read beyond the element size
-                h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
-            h = (h + seeds[i]) % m; // Use a different seed for each hash function
-            // Set the bit in shared memory
-            atomicOr(&shared_bits[h / 32], 1u << (h % 32)); // Use atomic operation
+            for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j) 
+                h = (h * 31 + elements[idx * elem_size + j]) % m; 
+            h = (h + seeds[i]) % m; 
+            atomicOr(&shared_bits[h / 32], 1u << (h % 32)); 
         }
     }
     __syncthreads();
 
     // Merge in globale
     for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
-        atomicOr(&bit_array[i], shared_bits[i]); // Merge shared bits into global memory
+        atomicOr(&bit_array[i], shared_bits[i]); 
     }
 }
 
@@ -67,9 +64,9 @@ __global__ void bloom_query_shared(uint32_t* bit_array, const char* elements, co
     int idx = blockIdx.x * blockDim.x + tid;
 
 
-    // Inizializza shared memory
+    
     for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
-        shared_bits[i] = bit_array[i]; // Copy global bits to shared memory
+        shared_bits[i] = bit_array[i]; 
     }
 
     if (idx < num_elems) {
@@ -77,17 +74,17 @@ __global__ void bloom_query_shared(uint32_t* bit_array, const char* elements, co
         for (int i = 0; i < k && possibly_present; ++i) {
             size_t h = 0;
             for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
-                h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
+                h = (h * 31 + elements[idx * elem_size + j]) % m; 
             h = (h + seeds[i]) % m;
             if (!(shared_bits[h / 32] & (1u << (h % 32)))) {
-                possibly_present = false; // If any bit is not set, the element is definitely not present
+                possibly_present = false; 
             }
         }
         results[idx] = possibly_present;
     }
-} // probably not useful and not necessary, but kept for experimentation
+} 
 
-// seeds for hash functions can be defined as constants (prime numbers or random values)
+
 __constant__ int const_seeds[NUM_SEEDS];
 
 __global__ void bloom_insert_constant(uint32_t* bit_array, const char* elements, int elem_size, int num_elems, int m, int k) {
@@ -97,7 +94,7 @@ __global__ void bloom_insert_constant(uint32_t* bit_array, const char* elements,
     for (int i = 0; i < k; ++i) {
         size_t h = 0;
         for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
-            h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
+            h = (h * 31 + elements[idx * elem_size + j]) % m;
         h = (h + const_seeds[i]) % m; // Use a constant seed for each hash function
         atomicOr(&bit_array[h / 32], 1u << (h % 32));
     }
@@ -111,7 +108,7 @@ __global__ void bloom_query_constant(uint32_t* bit_array, const char* elements, 
     for (int i = 0; i < k && possibly_present; ++i) {
         size_t h = 0;
         for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
-            h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
+            h = (h * 31 + elements[idx * elem_size + j]) % m; 
         h = (h + const_seeds[i]) % m; // Use a constant seed for each hash function
         if (!(bit_array[h / 32] & (1u << (h % 32)))) possibly_present = false;
     }
@@ -123,25 +120,25 @@ __global__ void bloom_insert_hybrid(uint32_t* bit_array, const char* elements, i
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + tid;
 
-    // Initialize shared memory
+    
     for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
-        shared_bits[i] = 0; // Initialize shared memory bits to 0
+        shared_bits[i] = 0; // 
     }
 
     if (idx < num_elems) {
         for (int i = 0; i < k; ++i) {
             size_t h = 0;
             for (int j = 0; j < elem_size && elements[idx * elem_size + j] != '\0'; ++j)
-                h = (h * 31 + elements[idx * elem_size + j]) % m; // Simple hash function
+                h = (h * 31 + elements[idx * elem_size + j]) % m; 
             h = (h + const_seeds[i]) % m;
             atomicOr(&shared_bits[h / 32], 1u << (h % 32));
         }
     }
     __syncthreads();
 
-    // Merge in global memory
+    
     for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
-        atomicOr(&bit_array[i], shared_bits[i]); // Merge shared bits into global memory
+        atomicOr(&bit_array[i], shared_bits[i]); 
     }
 }
 
@@ -150,9 +147,9 @@ __global__ void bloom_query_hybrid(uint32_t* bit_array, const char* elements, in
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + tid;
 
-    // Initialize shared memory
+    
     for (int i = tid; i < (m + 31) / 32; i += blockDim.x) {
-        shared_bits[i] = bit_array[i]; // Copy global bits to shared memory
+        shared_bits[i] = bit_array[i]; 
     }
 
     if (idx < num_elems) {
@@ -166,14 +163,14 @@ __global__ void bloom_query_hybrid(uint32_t* bit_array, const char* elements, in
         }
         results[idx] = possibly_present;
     }
-} // probably not useful and not necessary, but kept for experimentation
+} 
 
 void set_seeds_const(const int* seeds, int k) {
     CUDA_CHECK(cudaMemcpyToSymbol(const_seeds, seeds, k * sizeof(int)));
 }
 
 __global__ void bloom_insert_with_shared_elements_buffer(uint32_t* bit_array, const char* elements, const int* seeds, int elem_size, int num_elems, int m, int k) {
-    extern __shared__ char shared_elements[];  // dimensione: blockDim.x * elem_size
+    extern __shared__ char shared_elements[];  
 
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + tid;
@@ -184,9 +181,9 @@ __global__ void bloom_insert_with_shared_elements_buffer(uint32_t* bit_array, co
     for (int i = 0; i < elem_size; ++i) {
         shared_elements[tid * elem_size + i] = elements[idx * elem_size + i];
     }
-    __syncthreads();  // Assicura che tutti abbiano finito la copia
+    __syncthreads();  
 
-    // Elabora usando la copia in shared memory
+    
     for (int i = 0; i < k; ++i) {
         size_t h = 0;
         for (int j = 0; j < elem_size && shared_elements[tid * elem_size + j] != '\0'; ++j) {
@@ -199,14 +196,14 @@ __global__ void bloom_insert_with_shared_elements_buffer(uint32_t* bit_array, co
 
 
 __global__ void bloom_query_with_shared_elements_buffer(uint32_t* bit_array, const char* elements, const int* seeds, int elem_size, int num_elems, int m, int k, bool* results) {
-    extern __shared__ char shared_elements[];  // blockDim.x * elem_size
+    extern __shared__ char shared_elements[];  
 
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + tid;
 
     if (idx >= num_elems) return;
 
-    // Copia la stringa in shared memory
+    
     for (int i = 0; i < elem_size; ++i) {
         shared_elements[tid * elem_size + i] = elements[idx * elem_size + i];
     }

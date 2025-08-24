@@ -19,7 +19,7 @@ private:
     int m; // Size of the bit array
     std::vector<int> seeds; // Seeds for hash functions
 
-    size_t hash(const std::string &element, int seed) const {  // FNV-1a hash function
+    size_t hash(const std::string &element, int seed) const {
         size_t h = 0;
         for (char c : element) {
             h = (h * 31 + c) % m; // Simple hash function
